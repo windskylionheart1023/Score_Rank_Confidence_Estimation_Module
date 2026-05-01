@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # Copyright 2021, Ludwig Kürzinger; Kamo Naoyuki
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
-"""Perform CTC segmentation to align utterances within audio files."""
+"""Perform CTC segmentation to align utterances within audio files.
+
+NOTE (SR-CEM): forked from ESPnet's ``espnet2/bin/asr_align.py``. Provided
+in this repository because the CTC-only experiments (Tab. 7 of the paper)
+use this entry point alongside the patched beam_search modules to extract
+score features.
+"""
 
 import argparse
 import logging

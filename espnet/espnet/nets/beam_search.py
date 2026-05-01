@@ -1,4 +1,12 @@
-"""Beam search module."""
+"""Beam search module.
+
+NOTE (SR-CEM): forked from ESPnet's ``espnet/nets/beam_search.py``. The
+``Hypothesis`` namedtuple has been extended with a ``scores_list`` field
+that records, for every decoding step, the (sparse) score dict over the
+top-K vocabulary entries. ``asr_inference.py`` later dumps this into
+``logdir/output.1/{n}best_recog/scores_list.json`` for SR-CEM training.
+See https://github.com/windskylionheart1023/Score_Rank_Confidence_Estimation_Module.
+"""
 
 import logging
 from itertools import chain

@@ -1,4 +1,9 @@
-"""Parallel beam search module."""
+"""Parallel beam search module.
+
+NOTE (SR-CEM): forked from ESPnet's ``espnet/nets/batch_beam_search.py``.
+Carries the ``scores_list`` field through batched hypothesis state so the
+per-step score dicts captured in ``beam_search.py`` survive batching.
+"""
 
 import logging
 from typing import Any, Dict, List, NamedTuple, Tuple

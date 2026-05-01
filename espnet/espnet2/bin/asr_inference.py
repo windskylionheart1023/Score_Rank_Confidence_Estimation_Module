@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""ASR inference entry point.
+
+NOTE (SR-CEM): forked from ESPnet's ``espnet2/bin/asr_inference.py``. After
+beam search, the per-step score dicts collected in ``Hypothesis.scores_list``
+are written to ``logdir/output.1/{n}best_recog/scores_list.json`` (one entry
+per utterance, as ``[utt_id, [step_dicts]]``). The dataset builders in
+``espnet2/asr/CEM/dataset_*_srcem.py`` consume this file. No changes to the
+actual decoding behaviour.
+"""
+
 import argparse
 import logging
 import sys

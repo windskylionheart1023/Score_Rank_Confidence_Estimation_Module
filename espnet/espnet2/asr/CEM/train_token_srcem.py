@@ -1,111 +1,94 @@
 #!/usr/bin/env python3
+"""Train the token-level SR-CEM (Eq. 6 in the paper).
+
+Loads a NamedTensorDataset built by ``dataset_token_srcem.py``, drops the
+features listed in ``--remove-features`` (default: ``confidence`` - the raw
+softmax confidence is kept only for diagnostics, never as a model input),
+splits 80/20 train/val, trains :class:`Score_CEM` with BCE loss and saves
+the best validation checkpoint.
+"""
+
+import argparse
 import os
+
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset, random_split
-import matplotlib.pyplot as plt
 
 from espnet2.asr.CEM.model import NamedTensorDataset, Score_CEM
 
 
-###############################################################################
-#                                CONFIG                                       #
-###############################################################################
-SUFFIX = "_ours_libapt"
-CEM_PATH = "/esat/audioslave/yjia/espnet/espnet/espnet2/asr/CEM"
-
-TRAIN_DATASET_PATH = os.path.join(CEM_PATH, "dataset", "train_dataset_token_ours_libapt_s123.pt")
-
-REMOVE_FEATURES = ["confidence"]
-NUM_EPOCHS = 20
-VAL_RATIO = 0.2
-BATCH_SIZE = 128
-DEVICE = "cuda"
-
-LEARNING_RATE = 0.001
-WEIGHT_DECAY = 1e-4
-
-HIDDEN_SIZE_1 = 16  # currently unused, Score_CEM defines its own arch
-
-
-###############################################################################
-#                          DATASET PREPARATION                                #
-###############################################################################
-def load_dataset(path: str, remove_features: list[str]):
-    """Load dataset, drop features if needed, and return TensorDataset."""
+def load_dataset(path: str, remove_features):
+    """Load a NamedTensorDataset and project away ``remove_features``."""
     dataset: NamedTensorDataset = torch.load(path)
 
-    keep_indices = [i for i, name in enumerate(dataset.feature_names) if name not in remove_features]
+    keep_indices = [
+        i for i, name in enumerate(dataset.feature_names) if name not in remove_features
+    ]
     dataset.data = dataset.data[:, keep_indices]
     dataset.feature_names = [dataset.feature_names[i] for i in keep_indices]
 
     print("Using features:", dataset.feature_names)
-    print("Dataset shape:", dataset.data.shape)
+    print("Dataset shape:", tuple(dataset.data.shape))
 
     return TensorDataset(dataset.data, dataset.targets)
 
 
 def split_dataset(dataset: TensorDataset, val_ratio: float, seed: int = 42):
-    """Split dataset into train and validation subsets."""
-    dataset_size = len(dataset)
-    val_size = int(dataset_size * val_ratio)
-    train_size = dataset_size - val_size
-    return random_split(dataset, [train_size, val_size], generator=torch.Generator().manual_seed(seed))
+    val_size = int(len(dataset) * val_ratio)
+    train_size = len(dataset) - val_size
+    return random_split(
+        dataset, [train_size, val_size], generator=torch.Generator().manual_seed(seed)
+    )
 
 
-###############################################################################
-#                          TRAINING UTILITIES                                 #
-###############################################################################
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, save_path):
+def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device, save_path):
     train_losses, val_losses = [], []
     best_val_loss = float("inf")
 
     for epoch in range(num_epochs):
-        # ---- Training ----
         model.train()
-        running_loss = 0.0
+        running = 0.0
         for batch_data, batch_target in train_loader:
-            batch_data, batch_target = batch_data.to(DEVICE), batch_target.to(DEVICE)
+            batch_data = batch_data.to(device)
+            batch_target = batch_target.to(device)
             optimizer.zero_grad()
-            outputs = model(batch_data)
-            loss = criterion(outputs, batch_target)
+            loss = criterion(model(batch_data), batch_target)
             loss.backward()
             optimizer.step()
-            running_loss += loss.item() * batch_data.size(0)
-        epoch_train_loss = running_loss / len(train_loader.dataset)
-        train_losses.append(epoch_train_loss)
+            running += loss.item() * batch_data.size(0)
+        train_loss = running / len(train_loader.dataset)
+        train_losses.append(train_loss)
 
-        # ---- Validation ----
         model.eval()
-        val_running_loss = 0.0
+        running = 0.0
         with torch.no_grad():
-            for val_data, val_target in val_loader:
-                val_data, val_target = val_data.to(DEVICE), val_target.to(DEVICE)
-                val_outputs = model(val_data)
-                val_loss = criterion(val_outputs, val_target)
-                val_running_loss += val_loss.item() * val_data.size(0)
-        epoch_val_loss = val_running_loss / len(val_loader.dataset)
-        val_losses.append(epoch_val_loss)
+            for batch_data, batch_target in val_loader:
+                batch_data = batch_data.to(device)
+                batch_target = batch_target.to(device)
+                running += criterion(model(batch_data), batch_target).item() * batch_data.size(0)
+        val_loss = running / len(val_loader.dataset)
+        val_losses.append(val_loss)
 
-        # Save best model
-        if epoch_val_loss < best_val_loss:
-            best_val_loss = epoch_val_loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             torch.save(model.state_dict(), save_path)
-            print(f"Epoch {epoch+1}: Model updated (val loss {best_val_loss:.4f})")
+            print(f"Epoch {epoch + 1}: best model updated (val loss {best_val_loss:.4f})")
 
-        print(f"Epoch [{epoch+1}/{num_epochs}] - Train Loss: {epoch_train_loss:.4f}, Val Loss: {epoch_val_loss:.4f}")
+        print(f"Epoch [{epoch + 1}/{num_epochs}] - Train: {train_loss:.4f}, Val: {val_loss:.4f}")
 
     return train_losses, val_losses, best_val_loss
 
 
 def plot_losses(train_losses, val_losses, save_path):
     plt.figure()
-    plt.plot(range(1, len(train_losses) + 1), train_losses, marker="o", label="Train Loss")
-    plt.plot(range(1, len(val_losses) + 1), val_losses, marker="s", label="Val Loss")
+    plt.plot(range(1, len(train_losses) + 1), train_losses, marker="o", label="Train")
+    plt.plot(range(1, len(val_losses) + 1), val_losses, marker="s", label="Val")
     plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Training and Validation Loss Over Epochs")
+    plt.ylabel("BCE loss")
+    plt.title("SR-CEM (token) training")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
@@ -113,42 +96,59 @@ def plot_losses(train_losses, val_losses, save_path):
     plt.close()
 
 
-###############################################################################
-#                                   MAIN                                      #
-###############################################################################
-if __name__ == "__main__":
-    # Load dataset
-    dataset = load_dataset(TRAIN_DATASET_PATH, REMOVE_FEATURES)
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--train-dataset", required=True, help="Path to the training .pt dataset.")
+    parser.add_argument("--model-out", required=True, help="Where to save the best checkpoint.")
+    parser.add_argument("--loss-plot", default=None, help="Optional path to save train/val loss plot.")
+    parser.add_argument(
+        "--remove-features",
+        nargs="*",
+        default=["confidence"],
+        help="Feature names to drop before training.",
+    )
+    parser.add_argument("--num-epochs", type=int, default=20)
+    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--val-ratio", type=float, default=0.2)
+    parser.add_argument("--learning-rate", type=float, default=1e-3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    return parser.parse_args()
 
-    # Split
-    train_subset, val_subset = split_dataset(dataset, VAL_RATIO)
-    train_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False)
-    print(f"Training samples: {len(train_subset)}, Validation samples: {len(val_subset)}")
 
-    # Model
+def main():
+    args = parse_args()
+
+    dataset = load_dataset(args.train_dataset, args.remove_features)
+    train_subset, val_subset = split_dataset(dataset, args.val_ratio, args.seed)
+    train_loader = DataLoader(train_subset, batch_size=args.batch_size, shuffle=True)
+    val_loader = DataLoader(val_subset, batch_size=args.batch_size, shuffle=False)
+    print(f"Training samples: {len(train_subset)}, validation samples: {len(val_subset)}")
+
     input_size = dataset.tensors[0].shape[1]
-    model = Score_CEM(input_size=input_size).to(DEVICE)
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters())} "
-          f"(trainable: {sum(p.numel() for p in model.parameters() if p.requires_grad)})")
+    model = Score_CEM(input_size=input_size, hidden_size=args.hidden_size).to(args.device)
+    n_params = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters: {n_params}")
 
-    # Optimizer & loss
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = optim.Adam(
+        model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay
+    )
     criterion = nn.BCELoss()
 
-    # Train
-    os.makedirs(os.path.join(CEM_PATH, "model"), exist_ok=True)
-    model_name = f"cem_model_token{SUFFIX}.pt"
-    best_model_path = os.path.join(CEM_PATH, "model", model_name)
-
+    os.makedirs(os.path.dirname(args.model_out) or ".", exist_ok=True)
     train_losses, val_losses, best_val_loss = train_model(
         model, train_loader, val_loader, criterion, optimizer,
-        NUM_EPOCHS, best_model_path
+        args.num_epochs, args.device, args.model_out,
     )
 
-    # Plot losses
-    os.makedirs(os.path.join(CEM_PATH, "loss"), exist_ok=True)
-    plot_path = os.path.join(CEM_PATH, "loss", f"{model_name}_train_val_loss.png")
-    plot_losses(train_losses, val_losses, plot_path)
+    if args.loss_plot:
+        os.makedirs(os.path.dirname(args.loss_plot) or ".", exist_ok=True)
+        plot_losses(train_losses, val_losses, args.loss_plot)
 
-    print(f"Best model saved to {best_model_path} (val loss {best_val_loss:.4f})")
+    print(f"Best model saved to {args.model_out} (val loss {best_val_loss:.4f})")
+
+
+if __name__ == "__main__":
+    main()

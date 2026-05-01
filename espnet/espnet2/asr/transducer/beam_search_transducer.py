@@ -1,4 +1,11 @@
-"""Search algorithms for Transducer models."""
+"""Search algorithms for Transducer models.
+
+NOTE (SR-CEM): forked from ESPnet's
+``espnet2/asr/transducer/beam_search_transducer.py``. The ``Hypothesis``
+dataclass gained a ``scores_list`` field used to record per-non-blank-step
+score dicts; SR-CEM treats RNN-T inference as beam search without prefix
+search (Sec. IV-D of the paper).
+"""
 
 import logging
 from dataclasses import dataclass

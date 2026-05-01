@@ -1,3 +1,12 @@
+"""CTC module.
+
+NOTE (SR-CEM): forked from ESPnet's ``espnet2/asr/ctc.py``. Bundled here so
+the CTC-only experiments in the paper (Tab. 7) use the same CTC behaviour as
+the SR-CEM training pipeline. The ``log_softmax`` / ``softmax`` outputs
+exposed here are what the patched beam-search modules consume to build the
+per-step score dicts captured in ``Hypothesis.scores_list``.
+"""
+
 import logging
 from typing import Optional
 

@@ -1,78 +1,63 @@
+"""Discrimination metrics for confidence estimation.
+
+Each function takes a list of (confidence, correctness) pairs, where
+``confidence`` is in [0, 1] and ``correctness`` is 0 or 1.
+"""
+
 import math
-from sklearn.metrics import roc_auc_score, average_precision_score
+
+from sklearn.metrics import average_precision_score, roc_auc_score
+
 
 def nce(pairs):
+    """Normalized Cross Entropy [Siu, Gish, Richardson, 1997].
+
+    Returns a value in (-inf, 1]; higher is better. Returns 0.0 when the
+    label distribution is degenerate (all correct or all incorrect), since
+    NCE is undefined in that case.
+    """
     eps = 1e-9
-    correctness = [c for _, c in pairs]
-    confidences = [p for p, _ in pairs]
+    num_samples = len(pairs)
+    p_correct = sum(c for _, c in pairs) / num_samples
+    p_wrong = 1.0 - p_correct
 
-    # H(c): entropy of correctness labels
-    num_samples = len(correctness)
-    num_correct = sum(correctness)
-    p_correct = num_correct / num_samples
-    p_wrong = 1 - p_correct
+    if p_correct in (0.0, 1.0):
+        return 0.0
 
-    if p_correct in [0, 1]:
-        h_c = 0.0  # log(0) case handled: entropy is 0 if labels are all the same
-    else:
-        h_c = - (p_correct * math.log(p_correct + eps) + p_wrong * math.log(p_wrong + eps))
+    h_c = -(p_correct * math.log(p_correct + eps) + p_wrong * math.log(p_wrong + eps))
 
-    # H(c, p): cross-entropy between correctness and predicted confidence
     h_cp = 0.0
     for p, c in pairs:
-        p = min(max(p, eps), 1 - eps)  # clamp
-        if c == 1:
-            h_cp += -math.log(p)
-        else:
-            h_cp += -math.log(1 - p)
+        p = min(max(p, eps), 1.0 - eps)
+        h_cp += -math.log(p) if c == 1 else -math.log(1.0 - p)
     h_cp /= num_samples
 
-    # Normalized Cross Entropy
-    if h_c == 0:
-        return 0.0  # undefined NCE if entropy is 0, can also return float('nan')
-    else:
-        nce = (h_c - h_cp) / h_c
-        return nce
+    return (h_c - h_cp) / h_c
+
 
 def aucroc(pairs):
-    """
-    pairs: list of (confidence, correctness) where correctness is 0 or 1
-    returns: AUC-ROC (float in [0,1])
-    """
+    """AUC-ROC; returns NaN if labels are all the same class."""
     confidences = [p for p, _ in pairs]
-    labels      = [c for _, c in pairs]
-    # if all labels are the same, roc_auc_score is undefined
+    labels = [c for _, c in pairs]
     if len(set(labels)) < 2:
-        return float('nan')
+        return float("nan")
     return roc_auc_score(labels, confidences)
 
 
 def aucpr(pairs):
-    """
-    Traditional AUC-PR (correct=positive)
-    """
+    """AUC-PR with correct predictions as the positive class."""
     confidences = [p for p, _ in pairs]
-    labels      = [c for _, c in pairs]
-    # average_precision_score gracefully handles imbalanced classes
+    labels = [c for _, c in pairs]
     return average_precision_score(labels, confidences)
 
 
 def aucpr_neg(pairs):
-    """
-    AUC-PR with errors treated as positives (i.e. flip labels)
-    """
+    """AUC-PR with errors (incorrect predictions) as the positive class."""
     confidences = [p for p, _ in pairs]
-    labels      = [1 - c for _, c in pairs]
+    labels = [1 - c for _, c in pairs]
     return average_precision_score(labels, confidences)
 
 
 def all_metrics(pairs):
-    """
-    Returns a tuple (aucroc, aucpr, aucpr_neg)
-    """
-    return (
-        nce(pairs),
-        aucroc(pairs),
-        aucpr(pairs),
-        aucpr_neg(pairs),
-    )
+    """Return (NCE, AUC-ROC, AUC-PR, AUC-PR-neg) as a 4-tuple."""
+    return nce(pairs), aucroc(pairs), aucpr(pairs), aucpr_neg(pairs)
